@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anruf-Erinnerungen Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  fontFamily: { sans: ['"Instrument Sans"', 'system-ui', 'Segoe UI', 'sans-serif'] },
+  colors: { ink: '#1B2A3A', paper: '#EDF0F3', line: '#D3DAE1', sig: '#0E6E78', sigd: '#0A5760', amber: '#C77D0A' }
+}}}
+</script>
+<style>
+  body { font-variant-numeric: tabular-nums; }
+  .dw { font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  dialog::backdrop { background: rgba(27,42,58,.55); }
+  dialog[open] { animation: pop .14s ease-out; }
+  @keyframes pop { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } }
+  :focus-visible { outline: 3px solid #0E6E78; outline-offset: 2px; }
+</style>
+</head>
+<body class="bg-paper text-ink font-sans min-h-screen">
+
+<header class="bg-ink text-white">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
+    <h1 class="text-xl font-semibold">Anruf-Erinnerungen</h1>
+    <p class="text-sm text-white/70 hidden sm:block">Taste <kbd class="px-1.5 py-0.5 rounded bg-white/15 text-white">/</kbd> springt in die Suche</p>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 grid gap-6 lg:grid-cols-[1.25fr_1fr] items-start">
+
+  <!-- Suche & Personen -->
+  <section aria-labelledby="h-suche">
+    <h2 id="h-suche" class="sr-only">Anrufer suchen</h2>
+    <label for="search" class="sr-only">Anrufer suchen</label>
+    <div class="relative">
+      <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-ink/50" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="search" type="search" autocomplete="off" autofocus placeholder="Anrufer suchen: Name, Firma oder Nummer"
+        class="w-full h-16 pl-14 pr-4 text-xl rounded-xl border-2 border-line bg-white shadow-sm focus:border-sig focus:outline-none placeholder:text-ink/40">
+    </div>
+    <div id="results" class="hidden mt-3" aria-live="polite"></div>
+
+    <div class="mt-6 flex items-center justify-between gap-3 flex-wrap">
+      <h2 id="h-personen" class="font-semibold">Für wen ist der Anruf?</h2>
+      <div id="groupFilter" class="inline-flex rounded-lg bg-white border border-line p-1 text-sm" role="group" aria-label="Personengruppe"></div>
+    </div>
+    <ul id="people" class="mt-3 grid gap-2 sm:grid-cols-2"></ul>
+  </section>
+
+  <!-- To-Do -->
+  <section aria-labelledby="h-todo" class="bg-white rounded-xl border border-line shadow-sm lg:sticky lg:top-4">
+    <div class="p-4 border-b border-line">
+      <h2 id="h-todo" class="text-lg font-semibold">Rückrufe &amp; Vermittlung</h2>
+      <div id="statusFilter" class="mt-3 grid grid-cols-3 gap-1 rounded-lg bg-paper p-1 text-sm" role="group" aria-label="Ansicht wählen"></div>
+    </div>
+    <ul id="todos" class="divide-y divide-line max-h-[70vh] overflow-y-auto"></ul>
+    <p id="noTodos" class="hidden p-8 text-center text-ink/60"></p>
+  </section>
+</main>
+
+<!-- Detail-Modal -->
+<dialog id="modal" class="w-[min(40rem,calc(100vw-1.5rem))] max-h-[92vh] p-0 rounded-2xl shadow-2xl bg-white text-ink backdrop:bg-ink/50 m-auto overflow-y-auto">
+  <div class="p-5 sm:p-6">
+    <div class="flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <h2 id="mName" class="text-2xl font-semibold leading-tight break-words"></h2>
+        <p id="mRole" class="text-ink/70 mt-1"></p>
+      </div>
+      <div class="text-right shrink-0">
+        <div class="text-xs text-ink/60">Durchwahl</div>
+        <div id="mDw" class="dw text-4xl font-bold text-sig leading-none"></div>
+      </div>
+    </div>
+
+    <dl id="mDetails" class="mt-5 grid sm:grid-cols-2 gap-x-6 gap-y-3 text-sm border-t border-line pt-4"></dl>
+
+    <form id="callForm" class="mt-6 border-t border-line pt-5 space-y-4">
+      <h3 class="font-semibold">Neuer Anruf</h3>
+      <div id="cFields" class="space-y-4"></div>
+      <p class="text-xs text-ink/50"><span class="text-red-700">*</span> Pflichtfeld. Strg/Cmd + Enter speichert.</p>
+      <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
+        <button type="button" id="mClose" class="h-12 px-5 rounded-lg border border-line font-medium hover:bg-paper">Abbrechen</button>
+        <button type="submit" class="h-12 px-5 rounded-lg bg-sig hover:bg-sigd text-white font-semibold">Anruf-Erinnerung hinzufügen</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<!-- Bearbeiten-Modal -->
+<dialog id="editModal" class="w-[min(40rem,calc(100vw-1.5rem))] max-h-[92vh] p-0 rounded-2xl shadow-2xl bg-white text-ink m-auto overflow-y-auto">
+  <form id="editForm" class="p-5 sm:p-6 space-y-4">
+    <div>
+      <h2 class="text-xl font-semibold">Eintrag bearbeiten</h2>
+      <p id="eFor" class="text-sm text-ink/70 mt-1"></p>
+    </div>
+    <div id="eFields" class="space-y-4"></div>
+    <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
+      <button type="button" id="eClose" class="h-12 px-5 rounded-lg border border-line font-medium hover:bg-paper">Abbrechen</button>
+      <button type="submit" class="h-12 px-5 rounded-lg bg-sig hover:bg-sigd text-white font-semibold">Änderungen speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" role="status" class="pointer-events-none fixed bottom-5 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-ink text-white text-sm shadow-lg opacity-0 transition-opacity"></div>
+
+<script>
+/* ---------- Daten (aus der Fonda-Telefonliste) ----------
+   Vorname|Nachname|DW|Rufgruppe|Handy geschäftlich|Handy privat|Funktion|E-Mail|Funktion Website|Weitere Info|Gruppe(t=Team,p=Partner)|Verteiler */
+const RAW = `
+Conny|Weisbarth|16|1||0049 178 699 52 83|Praktikantin|c.weisbarth@fonda.at|||t|allefondas, fondawien
+Finn|Rappel|15|2|||Praktikantin|f.rappel@fonda.at|||t|allefondas, fondawien
+Larissa|Eckl|25|3||0680 12 16 050|UX Design|l.eckl@fonda.at|||t|allefondas, fondawien
+Julian|Büdenbender|27|4||0660 61 07 212|Interne Kommunikation|j.buedenbender@fonda.at|||t|allefondas, fondawien
+Lena|Stornig|23|5||0664 54 41 397|GF Assistenz, Office Management|l.stornig@fonda.at|||t|allefondas, fondawien
+Felix|Schwarz|14|6||0670 20 48 852|UX Design, PM, Konzeption|f.schwarz@fonda.at|||t|allefondas, fondawien
+Melanie|Haffner|20|7||0699 19 49 99 49|UX Design, PM, Keyaccount|m.haffner@fonda.at|||t|allefondas, fondawien
+Andreas|Höfert|28|8||0699 11 20 89 40|UX Design, PM, Konzeption|a.hoefert@fonda.at|UX-Design, PM||t|allefondas, fondawien
+Nadja|Gsöllpointner|11|9||0676 75 33 330|UX Design, PM, Konzeption|n.gsoellpointner@fonda.at||Mo bis Mi|t|allefondas, fondawien
+Gloria|Witkowski|10|10||0664 46 83 286|UX UI Design|g.witkowski@fonda.at|||t|allefondas, fondawien
+Philipp|Reiter|29|11||0664 43 64 844|PL, Digital Marketing|p.reiter@fonda.at|PM, Werbung, Online Marketing||t|allefondas, fondawien
+Johanna|Zeilinger|12|12|0699 10 68 30 66||GF Assistenz, Back-Office, PM, HR|j.zeilinger@fonda.at|GF-Assistenz, Back-Office, PM|office@fonda.at|t|allefondas, fondawien
+Sina|Jonas|38|13||0676 772 95 74|UX Design, PM, Konzeption|s.jonas@fonda.at|UX-/UI-Design||t|allefondas, fondawien
+Vicky|Zedlacher|19|14|0660 781 39 38|0650 634 05 86|PM, Konzeption|v.zedlacher@fonda.at|PM, Konzeption, UX-Design||t|allefondas, fondawien
+Alexandra|Haid|26|15|0699 15 15 11 94||UX Design, PM, Konzeption|a.haid@fonda.at|PM, Konzeption, UX-Design||t|allefondas, fondawien
+Josip|Gavric|||| 0650 896 33 34|Konzeption|j.gavric@fonda.at|UX Design, Qualitätssicherung|derzeit Karenz|t|allefondas, fondawien
+Giorgia|Scaramuzza|31|16||0660 55 78 981|UX/UI Design|g.scaramuzza@fonda.at|UX Design||t|allefondas, fondawien
+Viktor|Blumauer|17|17|0699 11 15 11 97|0676 909 3103|TPM, Development|v.blumauer@fonda.at|TPM, Development|Wien/Amstetten|t|allefondas, fondawien, fondalabs
+Georg|Ringer|21|18||0699 12 76 49 03|TYPO3 Development|g.ringer@fonda.at|||t|allefondas, fondawien
+Hans|Auer|18|19|0699 19 58 10 52||GF, Design, Konzept, PM, Video|h.auer@fonda.at|GF, Design, PM||t|allefondas, fondawien
+Volker|Kemeter|32|20||0699 10340174|Web Development|v.kemeter@fonda.at|TYPO3, Programmierung||t|allefondas, fondawien
+Thomas|Trenz|24|21|0699 15 15 11 95|0680 140 47 89|TYPO3 Development|t.trenz@fonda.at|Lead TYPO3, Programmierung|ttskorp@gmail.com|t|allefondas, fondawien
+Veronika|Reiberger||||0664 52 56 062||veronika@reiberger.de|PM, Moderation||t|
+Xandi|Reiberger|13||0699 15 15 11 99||GF, Konzeption|a.reiberger@fonda.at|GF, Konzeption||t|allefondas, fondawien
+Cornelia|Weichselbaum||| 0660 11 89 960||Web Development|c.weichselbaum@fonda.at|Web Development|Mo bis Mi|t|allefondas, fondalabs
+Daniel|Wittberger||| 0664 46 08 179|0664 465 7510|Web Development|d.wittberger@fonda.at|Web Development|genannt „Witti“|t|allefondas, fondalabs
+Dominik|Gschossmann||||0660 47 18 600|Web Development|d.gschossmann@fonda.at|Web Development|im Büro in Wien|t|allefondas, fondalabs
+Dominik|Pilz||||0680 12 41 853|Web Development|d.pilz@fonda.at|Web Development|im Büro in Wien|t|allefondas, fondalabs
+Florian|Bürbaumer||| 0660 87 12 064|0660 42 65 933|Web Development|f.buerbaumer@fonda.at|Web Development||t|allefondas, fondalabs
+Nicolas|Plank||||0664 3935758|Web Development|n.plank@fonda.at|Web Development||t|allefondas, fondalabs
+Niklas|Zauner||| 0660 67 47 993|0677 62 43 78 24|Web Development|n.zauner@fonda.at|Web Development||t|allefondas, fondalabs
+Nina|Trabe||| 0660 21 00 483|0660 12 75 725|Web Development|n.trabe@fonda.at|Web Development|im Büro in Wien|t|allefondas, fondalabs
+Philip|Schwaiger||||0660 38 41 108|Web Development|p.schwaiger@fonda.at|Web Development||t|allefondas, fondalabs
+Sabine|Zeitlhofer||||0664 52 47 105|Web Development|s.zeitlhofer@fonda.at|Web Development|Amstetten|t|allefondas, fondalabs
+Stefan|Greß||||0677 61 60 55 39|Web Development|s.gress@fonda.at|Web Development||t|allefondas, fondalabs
+Alex|Obert|||0676 62 09 747||TYPO3 Developer|a.obert@fonda.at|||p|
+Amal|Mateur||||| TYPO3 Developer|amal.mateur@sofflex.com|||p|
+Barbara|Kühnelt|||||0660 99 40 823|ehem. Mitarbeiterin, PM, Agile Coach|||p|
+Christoph|Bolda|||0664 50 12 190||TYPO3 Developer|hello@christophbolda.at||in St. Agatha|p|
+Daniel|Aichinger-Mühlbacher|||0660 15 14 064||ehem. Mitarbeiter: Web Dev.|d.aichinger@fonda.at|||p|
+Doron|Edlinger|||0677 61 88 10 93||im Office, IT Dienstleistungen|edlinger@zweistelle.at||Zweistelle|p|
+Gerwin|Gfrerer|||0699 10 68 60 36||SEO/SEA, Onlinemarketing|g.gfrerer@fonda.at|||p|
+Haithem|Daoud||||| TYPO3 Developer|h.daoud@fonda.at||in Tunesien|p|
+Johannes|Essl|||0699 14 89 79 20||im Office, Design: Branding, Corporate, UI|j.essl@fonda.at||johannes.essl@gmx.at|p|
+Johannes|Neuhofer|||0676 953 39 07||Ehem. Mitarbeiter bei LABS||||p|
+Julian|Kinger|||||0676 91 01 531|ehem. Mitarbeiter, UX Design, Konzeption|||p|
+Konstanze|Wagenhofer|||0699 10 27 30 63||Texting, Konzeption|k.wagenhofer@fonda.at||wirschreibens.at, konstanze.wagenhofer@wirschreibens.at|p|
+Lena|Doppel|||0676 31 90 654||Digital Strategist, IT Beraterin|lena.doppel@me.com|||p|
+Markus|Kienberger|||0664 13 44 864||im Office, selbsttätiger Berater|mk@markuskienberger.com|||p|
+Matyas|Fenyvesi|||||Web Development, Freelancer|matyas@fondalabs.at|||p|
+Nemanja|Todic||||| TYPO3 Developer|nemanja.todic@webbaysolutions.com||Web Bay, in Serbien|p|
+Patrick|Ringseis|||0664 16 85 031|0664 91 73 404|ehem. Mitarbeiter LABS - COO||||p|
+Peter|Eliades||||| TYPO3 Developer|peter@devsk.io||Devsk|p|
+Patrick|Stummer|||0677 61 59 19 03||im Office, IT Dienstleistungen|stummer@zweistelle.at||Zweistelle, und Doron Edlinger|p|
+Rafal|Kosakowski|||0699 19 33 69 73||im Office, Design: Branding, Corporate, UI|r.kosakowski@fonda.at|||p|
+Sebastian|Hanig|||0699 10 444 593||| sebastian@scalar.at|||p|
+Thomas|Mang|||0676 93 80 037||| tm@kiwiblau.at||Kiwiblau|p|
+Tom|Weiss|||||| t.weiss@fonda.at||X Mai 2023|p|
+Vicky|Pammer||||| 0660 66 62 524|ehem. Mitarbeiterin, UX Design, PM, Konzeption|||p|
+Yago|Ziegesar||||| 0049 163 39 36 376|ehem. Praktikant|y.ziegesar@fonda.at und yagovonziegesar@gmail.com|||p|
+`;
+
+const PEOPLE = RAW.trim().split('\n').map((l, i) => {
+  const f = l.split('|').map(s => s.trim());
+  return { id: i, first: f[0], last: f[1], dw: f[2], rg: f[3], mobWork: f[4], mobPriv: f[5],
+           role: f[6], email: f[7], roleWeb: f[8], info: f[9], group: f[10], lists: f[11] };
+});
+
+/* ---------- Helfer ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const full = p => `${p.first} ${p.last}`;
+const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss');
+const digits = s => String(s ?? '').replace(/\D/g, '');
+const fmt = iso => new Date(iso).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' Uhr';
+const STORE = 'anrufErinnerungen.v1';
+
+let todos = [];
+try { todos = JSON.parse(localStorage.getItem(STORE)) || []; } catch { todos = []; }
+todos.forEach(t => { if (t.done && !t.doneAt) t.doneAt = t.createdAt; });
+const save = () => { try { localStorage.setItem(STORE, JSON.stringify(todos)); } catch (e) { console.warn('localStorage nicht verfügbar', e); } };
+
+let groupSel = 't', statusSel = 'open', current = null, editing = null;
+
+/* ---------- Formularfelder (Neu + Bearbeiten teilen sich das Markup) ---------- */
+const inp = 'w-full px-3 rounded-lg border-2 border-line focus:border-sig focus:outline-none';
+const fieldsHTML = p => `
+  <div>
+    <label for="${p}Caller" class="block text-sm font-medium mb-1">Anrufer <span class="text-red-700" aria-hidden="true">*</span></label>
+    <input id="${p}Caller" required maxlength="120" placeholder="Name der anrufenden Person" class="${inp} h-12">
+    <p id="${p}Hint" class="hidden mt-1 text-sm font-medium text-amber"></p>
+  </div>
+  <div>
+    <label for="${p}Note" class="block text-sm font-medium mb-1">Anliegen <span class="text-red-700" aria-hidden="true">*</span></label>
+    <textarea id="${p}Note" required rows="3" maxlength="600" placeholder="Grund des Anrufs, Nachricht" class="${inp} py-2 resize-y"></textarea>
+  </div>
+  <fieldset class="rounded-xl bg-paper border border-dashed border-ink/25 p-4">
+    <legend class="px-2 text-sm font-medium text-ink/70">Zusatzinfos (optional)</legend>
+    <div class="grid sm:grid-cols-2 gap-3">
+      <div><label for="${p}Firma" class="block text-sm mb-1">Firma</label>
+        <input id="${p}Firma" maxlength="120" class="${inp} h-11 bg-white"></div>
+      <div><label for="${p}Phone" class="block text-sm mb-1">Telefonnummer</label>
+        <input id="${p}Phone" type="tel" maxlength="40" class="${inp} h-11 bg-white"></div>
+    </div>
+  </fieldset>`;
+$('cFields').innerHTML = fieldsHTML('c');
+$('eFields').innerHTML = fieldsHTML('e');
+['cNote', 'eNote'].forEach(id => $(id).addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.target.form.requestSubmit(); }
+}));
+function requiredFilled(form, ids) {
+  let ok = true;
+  ids.forEach(id => { const el = $(id); if (!el.value.trim()) { el.value = ''; ok = false; } });
+  if (!ok) form.reportValidity();
+  return ok;
+}
+
+/* ---------- Anrufer-Suche (offen + Archiv) ---------- */
+function matchCalls(q) {
+  const n = norm(q.trim()); if (!n) return [];
+  const d = digits(q);
+  return todos.filter(t => norm(`${t.caller} ${t.firma || ''}`).includes(n) ||
+      (d.length >= 3 && (digits(t.caller).includes(d) || digits(t.phone).includes(d))))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+const who = t => `${esc(t.targetName)}${t.targetDw ? ' (DW ' + esc(t.targetDw) + ')' : ''}`;
+
+function renderResults() {
+  const q = $('search').value.trim(), box = $('results');
+  if (!q) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  const m = matchCalls(q);
+  box.classList.remove('hidden');
+  if (!m.length) {
+    box.innerHTML = `<div class="rounded-xl border border-line bg-white p-4 text-sm">Kein früherer Anruf von „${esc(q)}“ gefunden. Wähle unten die Person, für die angerufen wird.</div>`;
+    return;
+  }
+  const l = m[0];
+  box.innerHTML = `<div class="rounded-xl border-2 border-sig bg-white overflow-hidden">
+    <div class="px-4 py-3 bg-sig text-white">
+      <p class="font-semibold">${m.length} ${m.length === 1 ? 'Anruf' : 'Anrufe'} gefunden</p>
+      <p class="text-sm text-white/90">Zuletzt bei ${who(l)} am ${fmt(l.createdAt)}${l.note ? ': ' + esc(l.note.length > 90 ? l.note.slice(0, 90) + '…' : l.note) : ''}</p>
+    </div>
+    <ul class="divide-y divide-line max-h-[50vh] overflow-y-auto">${m.map(ticketHTML).join('')}</ul></div>`;
+}
+
+/* ---------- Personenliste ---------- */
+function renderGroupFilter() {
+  const opts = [['t', 'Team'], ['p', 'Partner'], ['a', 'Alle']];
+  $('groupFilter').innerHTML = opts.map(([k, l]) =>
+    `<button data-g="${k}" class="px-3 py-1.5 rounded-md font-medium ${groupSel === k ? 'bg-ink text-white' : 'text-ink/70 hover:bg-paper'}" aria-pressed="${groupSel === k}">${l}</button>`).join('');
+}
+function renderPeople() {
+  const list = PEOPLE.filter(p => groupSel === 'a' || p.group === groupSel)
+    .sort((a, b) => (a.last + a.first).localeCompare(b.last + b.first, 'de'));
+  $('people').innerHTML = list.map(p => `
+    <li><button data-id="${p.id}" class="w-full text-left flex items-center justify-between gap-3 min-h-[3.75rem] px-4 py-2 rounded-xl bg-white border border-line hover:border-sig hover:shadow transition-shadow">
+      <span class="font-medium leading-snug">${esc(p.first)} <span class="font-semibold">${esc(p.last)}</span></span>
+      <span class="dw text-2xl font-bold ${p.dw ? 'text-sig' : 'text-ink/30'}">${p.dw ? esc(p.dw) : '–'}</span>
+    </button></li>`).join('');
+}
+
+/* ---------- Detail-Modal (neuer Anruf) ---------- */
+const modal = $('modal'), editModal = $('editModal');
+function row(label, val, href) {
+  if (!val) return '';
+  const v = href ? `<a class="text-sig underline underline-offset-2 break-all" href="${href}">${esc(val)}</a>` : esc(val);
+  return `<div><dt class="text-ink/60">${label}</dt><dd class="font-medium">${v}</dd></div>`;
+}
+function updateCallerHint() {
+  const m = matchCalls($('cCaller').value), h = $('cHint');
+  if (!m.length) { h.classList.add('hidden'); return; }
+  h.textContent = `Schon ${m.length}× angerufen. Zuletzt bei ${m[0].targetName} am ${fmt(m[0].createdAt)}.`;
+  h.classList.remove('hidden');
+}
+function openModal(id) {
+  current = PEOPLE.find(p => p.id === id);
+  const p = current;
+  $('mName').textContent = full(p);
+  $('mRole').textContent = p.role || '';
+  $('mDw').textContent = p.dw || '–';
+  const mail = p.email && p.email.includes('@') ? p.email.split(' ')[0] : '';
+  $('mDetails').innerHTML = [
+    row('Gruppe', p.group === 't' ? 'Team' : 'Partner / Freelancer'),
+    row('Rufgruppe', p.rg),
+    row('E-Mail', p.email, mail ? 'mailto:' + mail : ''),
+    row('Handy geschäftlich', p.mobWork, p.mobWork ? 'tel:' + p.mobWork.replace(/[^\d+]/g, '') : ''),
+    row('Handy privat', p.mobPriv, p.mobPriv ? 'tel:' + p.mobPriv.replace(/[^\d+]/g, '') : ''),
+    row('Funktion (Website)', p.roleWeb),
+    row('Weitere Info', p.info),
+    row('Verteiler', p.lists)
+  ].join('');
+  $('callForm').reset();
+  $('cCaller').value = $('search').value.trim();   // gesuchten Anrufer übernehmen
+  updateCallerHint();
+  modal.showModal();
+  ($('cCaller').value ? $('cNote') : $('cCaller')).focus();
+}
+const closeModal = () => { modal.close(); current = null; };
+
+$('people').addEventListener('click', e => { const b = e.target.closest('button[data-id]'); if (b) openModal(+b.dataset.id); });
+$('mClose').addEventListener('click', closeModal);
+modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+$('cCaller').addEventListener('input', updateCallerHint);
+
+$('callForm').addEventListener('submit', e => {
+  e.preventDefault();
+  if (!current || !requiredFilled($('callForm'), ['cCaller', 'cNote'])) return;
+  todos.unshift({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    targetName: full(current), targetDw: current.dw || '',
+    caller: $('cCaller').value.trim(), note: $('cNote').value.trim(),
+    firma: $('cFirma').value.trim(), phone: $('cPhone').value.trim(),
+    createdAt: new Date().toISOString(), done: false
+  });
+  save();
+  $('callForm').reset();
+  closeModal();
+  $('search').value = '';
+  if (statusSel === 'done') statusSel = 'open';
+  renderResults(); renderTodos();
+});
+
+/* ---------- Bearbeiten ---------- */
+function openEdit(t) {
+  editing = t;
+  $('eFor').innerHTML = `Anruf für ${who(t)}, eingegangen ${fmt(t.createdAt)}`;
+  $('eCaller').value = t.caller; $('eNote').value = t.note || '';
+  $('eFirma').value = t.firma || ''; $('ePhone').value = t.phone || '';
+  editModal.showModal();
+  $('eNote').focus();
+}
+const closeEdit = () => { editModal.close(); editing = null; };
+$('eClose').addEventListener('click', closeEdit);
+editModal.addEventListener('click', e => { if (e.target === editModal) closeEdit(); });
+$('editForm').addEventListener('submit', e => {
+  e.preventDefault();
+  if (!editing || !requiredFilled($('editForm'), ['eCaller', 'eNote'])) return;
+  Object.assign(editing, {
+    caller: $('eCaller').value.trim(), note: $('eNote').value.trim(),
+    firma: $('eFirma').value.trim(), phone: $('ePhone').value.trim()
+  });
+  save(); closeEdit(); renderTodos(); renderResults();
+});
+
+/* ---------- Kopieren ---------- */
+function messageFor(t) {
+  const first = (t.targetName || '').split(' ')[0];
+  let m = `Hey ${first}, es hat gerade ${t.caller}${t.firma ? ' von der Firma ' + t.firma : ''} angerufen.`;
+  if (t.note) m += ` Es geht um: ${t.note.replace(/\s*\n+\s*/g, ' ').replace(/[.\s]+$/, '')}.`;
+  if (t.phone) m += ` Die Telefonnummer ist: ${t.phone}.`;
+  return m;
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* Fallback */ }
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.cssText = 'position:fixed;opacity:0';
+  document.body.appendChild(ta); ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch {}
+  ta.remove(); return ok;
+}
+let toastTimer;
+function toast(msg) {
+  const el = $('toast'); el.textContent = msg; el.style.opacity = 1;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.style.opacity = 0, 1800);
+}
+
+/* ---------- Tickets (offen / Archiv) ---------- */
+const copyIcon = '<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
+const btn = 'h-9 px-3 text-sm rounded-lg font-medium inline-flex items-center gap-1.5';
+
+function ticketHTML(t) {
+  const d = t.done;
+  return `<li class="p-4 ${d ? 'bg-paper/60' : ''}">
+    <div class="flex gap-3">
+      <input type="checkbox" data-act="toggle" data-id="${t.id}" ${d ? 'checked' : ''} aria-label="${d ? 'Aus dem Archiv zurückholen' : 'Als erledigt markieren'}"
+        class="mt-1 w-6 h-6 shrink-0 accent-[#0E6E78] cursor-pointer">
+      <div class="min-w-0 flex-1 ${d ? 'opacity-70' : 'cursor-pointer'}" ${d ? '' : `data-act="edit" data-id="${t.id}" title="Zum Bearbeiten anklicken"`}>
+        <div class="flex items-baseline justify-between gap-2 flex-wrap">
+          <p class="font-semibold ${d ? 'line-through' : ''}">Für ${esc(t.targetName)}
+            <span class="dw text-sig ml-1">${t.targetDw ? 'DW ' + esc(t.targetDw) : 'keine DW'}</span></p>
+          <span class="text-xs ${d ? 'text-ink/60' : 'text-amber font-semibold'}">${d ? 'Archiv' : 'Offen'}</span>
+        </div>
+        <p class="mt-1 text-sm ${d ? 'line-through' : ''}"><span class="text-ink/60">Anrufer:</span> <span class="font-medium">${esc(t.caller)}</span>${t.firma ? ` <span class="text-ink/60">von</span> ${esc(t.firma)}` : ''}</p>
+        ${t.phone ? `<p class="mt-1 text-sm"><span class="text-ink/60">Telefon:</span> <a class="text-sig underline underline-offset-2" href="tel:${esc(t.phone.replace(/[^\d+]/g, ''))}">${esc(t.phone)}</a></p>` : ''}
+        ${t.note ? `<p class="mt-1 text-sm whitespace-pre-line break-words ${d ? 'line-through' : ''}">${esc(t.note)}</p>` : ''}
+        <p class="mt-1 text-xs text-ink/50">Eingegangen ${fmt(t.createdAt)}.${d && t.doneAt ? ' Erledigt ' + fmt(t.doneAt) + '.' : ''}</p>
+      </div>
+    </div>
+    <div class="mt-3 pl-9 flex gap-2 flex-wrap">
+      ${d
+        ? `<button data-act="restore" data-id="${t.id}" class="${btn} border border-line hover:bg-paper">Zurückholen</button>`
+        : `<button data-act="done" data-id="${t.id}" class="${btn} bg-sig hover:bg-sigd text-white">Erledigt</button>`}
+      <button data-act="copy" data-id="${t.id}" aria-label="Info-Text kopieren" title="Info-Text kopieren" class="${btn} border border-line hover:bg-paper">${copyIcon}<span>Kopieren</span></button>
+      ${d
+        ? `<button data-act="delete" data-id="${t.id}" class="${btn} border border-line text-red-700 hover:bg-red-50">Löschen</button>`
+        : `<button data-act="edit" data-id="${t.id}" class="${btn} text-ink/70 hover:bg-paper">Bearbeiten</button>`}
+    </div>
+  </li>`;
+}
+
+function renderTodos() {
+  const open = todos.filter(t => !t.done).length, arch = todos.length - open;
+  const defs = [['open', 'Offen', open], ['done', 'Archiv', arch], ['all', 'Alle', todos.length]];
+  $('statusFilter').innerHTML = defs.map(([k, l, n]) =>
+    `<button data-s="${k}" aria-pressed="${statusSel === k}" class="h-10 rounded-md font-medium ${statusSel === k ? 'bg-white shadow text-ink' : 'text-ink/60 hover:text-ink'}">${l} <span class="${k === 'open' && n ? 'bg-amber text-white' : 'bg-line text-ink/70'} ml-1 px-1.5 py-0.5 rounded-full text-xs">${n}</span></button>`).join('');
+
+  let list = todos.filter(t => statusSel === 'all' || (statusSel === 'open' ? !t.done : t.done));
+  if (statusSel === 'done') list = list.slice().sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || ''));
+  else list = list.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  $('todos').innerHTML = list.map(ticketHTML).join('');
+
+  const empty = $('noTodos');
+  empty.classList.toggle('hidden', list.length > 0);
+  empty.textContent = todos.length === 0
+    ? 'Noch keine Anrufe erfasst. Wähle links eine Person aus, um einen Anruf einzutragen.'
+    : statusSel === 'open' ? 'Keine offenen Anrufe.' : 'Das Archiv ist noch leer. Erledigte Anrufe landen hier.';
+}
+
+async function onTicketAction(e) {
+  if (e.target.closest('a')) return;                 // Telefon-Links normal ausführen
+  const el = e.target.closest('[data-act]'); if (!el) return;
+  const t = todos.find(x => x.id === el.dataset.id); if (!t) return;
+  const act = el.dataset.act;
+
+  if (act === 'edit') { if (!t.done) openEdit(t); return; }
+  if (act === 'copy') {
+    const ok = await copyText(messageFor(t));
+    toast(ok ? 'Info-Text kopiert' : 'Kopieren nicht möglich');
+    const label = el.querySelector('span');
+    if (ok && label) { label.textContent = 'Kopiert'; setTimeout(() => { label.textContent = 'Kopieren'; }, 1500); }
+    return;
+  }
+  if (act === 'delete') {
+    if (!confirm(`Eintrag von ${t.caller} (für ${t.targetName}) endgültig löschen?`)) return;
+    todos = todos.filter(x => x !== t);
+  } else {
+    const toDone = act === 'done' || (act === 'toggle' && !t.done);
+    t.done = toDone;
+    if (toDone) t.doneAt = new Date().toISOString(); else delete t.doneAt;
+  }
+  save(); renderTodos(); renderResults();
+}
+$('todos').addEventListener('click', onTicketAction);
+$('results').addEventListener('click', onTicketAction);
+$('statusFilter').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (b) { statusSel = b.dataset.s; renderTodos(); } });
+
+/* ---------- Suche, Gruppen, Tastatur ---------- */
+$('search').addEventListener('input', renderResults);
+$('search').addEventListener('keydown', e => { if (e.key === 'Escape') { e.target.value = ''; renderResults(); } });
+$('groupFilter').addEventListener('click', e => { const b = e.target.closest('[data-g]'); if (b) { groupSel = b.dataset.g; renderGroupFilter(); renderPeople(); } });
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && !modal.open && !editModal.open && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); $('search').focus(); $('search').select(); }
+});
+[modal, editModal].forEach(m => m.addEventListener('close', () => { $('search').focus(); }));
+
+/* Änderungen aus anderen Tabs übernehmen */
+window.addEventListener('storage', e => { if (e.key === STORE) { try { todos = JSON.parse(e.newValue) || []; } catch { todos = []; } renderTodos(); renderResults(); } });
+
+renderGroupFilter(); renderPeople(); renderTodos();
+</script>
+</body>
+</html>
