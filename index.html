@@ -39,10 +39,25 @@ tailwind.config = { theme: { extend: {
   <section aria-labelledby="h-suche">
     <h2 id="h-suche" class="sr-only">Anrufer suchen</h2>
     <label for="search" class="sr-only">Anrufer suchen</label>
-    <div class="relative">
-      <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-ink/50" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="search" type="search" autocomplete="off" autofocus placeholder="Anrufer suchen: Name, Firma oder Nummer"
-        class="w-full h-16 pl-14 pr-4 text-xl rounded-xl border-2 border-line bg-white shadow-sm focus:border-sig focus:outline-none placeholder:text-ink/40">
+    <div class="grid gap-4 md:grid-cols-2">
+      <div class="rounded-xl border border-line bg-white p-3 shadow-sm">
+        <label for="search" class="flex items-center gap-2 px-1 text-base font-semibold"><span aria-hidden="true">☎️</span> Anrufer suchen</label>
+        <p class="px-1 mt-0.5 mb-2 text-xs text-ink/60">Name, Firma oder Nummer</p>
+        <div class="relative">
+          <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-ink/50" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="search" type="search" autocomplete="off" autofocus aria-label="Anrufer suchen" placeholder="Anrufer suchen"
+            class="w-full h-14 pl-14 pr-4 text-lg rounded-lg border-2 border-line bg-paper shadow-sm focus:border-sig focus:outline-none placeholder:text-ink/40">
+        </div>
+      </div>
+      <div class="rounded-xl border border-line bg-white p-3 shadow-sm">
+        <label for="employeeSearch" class="flex items-center gap-2 px-1 text-base font-semibold"><span aria-hidden="true">👥</span> Mitarbeiter suchen</label>
+        <p class="px-1 mt-0.5 mb-2 text-xs text-ink/60">Name, Funktion, E-Mail oder weitere Infos</p>
+        <div class="relative">
+          <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-ink/50" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="employeeSearch" type="search" autocomplete="off" aria-label="Mitarbeiter suchen" placeholder="Mitarbeiter suchen"
+            class="w-full h-14 pl-14 pr-4 text-lg rounded-lg border-2 border-line bg-paper shadow-sm focus:border-sig focus:outline-none placeholder:text-ink/40">
+        </div>
+      </div>
     </div>
     <div id="results" class="hidden mt-3" aria-live="polite"></div>
 
@@ -260,12 +275,14 @@ function renderResults() {
 
 /* ---------- Personenliste ---------- */
 function renderGroupFilter() {
-  const opts = [['t', 'Team'], ['p', 'Partner'], ['a', 'Alle']];
+  const opts = [['t', 'Team wien'], ['p', 'Externe'], ['a', 'Alle']];
   $('groupFilter').innerHTML = opts.map(([k, l]) =>
     `<button data-g="${k}" class="px-3 py-1.5 rounded-md font-medium ${groupSel === k ? 'bg-ink text-white' : 'text-ink/70 hover:bg-paper'}" aria-pressed="${groupSel === k}">${l}</button>`).join('');
 }
 function renderPeople() {
-  const list = PEOPLE.filter(p => groupSel === 'a' || p.group === groupSel)
+  const q = norm($('employeeSearch').value.trim());
+  const list = PEOPLE.filter(p => (groupSel === 'a' || p.group === groupSel) &&
+      (!q || norm(`${full(p)} ${p.role} ${p.roleWeb} ${p.info} ${p.email}`).includes(q)))
     .sort((a, b) => (a.last + a.first).localeCompare(b.last + b.first, 'de'));
   $('people').innerHTML = list.map(p => `
     <li><button data-id="${p.id}" class="w-full text-left flex items-center justify-between gap-3 min-h-[3.75rem] px-4 py-2 rounded-xl bg-white border border-line hover:border-sig hover:shadow transition-shadow">
@@ -363,7 +380,7 @@ function messageFor(t) {
   let m = `Hey ${first}, es hat gerade ${t.caller}${t.firma ? ' von der Firma ' + t.firma : ''} angerufen.`;
   if (t.note) m += ` Es geht um: ${t.note.replace(/\s*\n+\s*/g, ' ').replace(/[.\s]+$/, '')}.`;
   if (t.phone) m += ` Die Telefonnummer ist: ${t.phone}.`;
-  return m;
+  return `${m} Ich habe gesagt, dass du dich meldest:)`;
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch { /* Fallback */ }
@@ -462,6 +479,8 @@ $('statusFilter').addEventListener('click', e => { const b = e.target.closest('[
 /* ---------- Suche, Gruppen, Tastatur ---------- */
 $('search').addEventListener('input', renderResults);
 $('search').addEventListener('keydown', e => { if (e.key === 'Escape') { e.target.value = ''; renderResults(); } });
+$('employeeSearch').addEventListener('input', renderPeople);
+$('employeeSearch').addEventListener('keydown', e => { if (e.key === 'Escape') { e.target.value = ''; renderPeople(); } });
 $('groupFilter').addEventListener('click', e => { const b = e.target.closest('[data-g]'); if (b) { groupSel = b.dataset.g; renderGroupFilter(); renderPeople(); } });
 document.addEventListener('keydown', e => {
   if (e.key === '/' && !modal.open && !editModal.open && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); $('search').focus(); $('search').select(); }
