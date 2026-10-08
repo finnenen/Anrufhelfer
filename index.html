@@ -22,6 +22,7 @@ tailwind.config = { theme: { extend: {
   @keyframes pop { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } }
   :focus-visible { outline: 3px solid #0E6E78; outline-offset: 2px; }
+  #gameCanvas { image-rendering: auto; touch-action: none; }
 </style>
 </head>
 <body class="bg-paper text-ink font-sans min-h-screen">
@@ -76,6 +77,44 @@ tailwind.config = { theme: { extend: {
     </div>
     <ul id="todos" class="divide-y divide-line max-h-[70vh] overflow-y-auto"></ul>
     <p id="noTodos" class="hidden p-8 text-center text-ink/60"></p>
+
+    <section class="border-t border-line p-4" aria-labelledby="gameTitle">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h3 id="gameTitle" class="font-semibold">Kurze Spielpause</h3>
+          <p id="gameHelp" class="text-xs text-ink/60 mt-0.5">Fonta Jump: Leertaste oder Pfeil nach oben</p>
+        </div>
+        <span id="gameScore" class="text-sm font-semibold text-sig" aria-live="polite">0 Punkte</span>
+      </div>
+      <div class="mt-3 grid grid-cols-2 gap-1 rounded-lg bg-paper p-1 text-sm" role="group" aria-label="Spiel auswählen">
+        <button id="jumpMode" type="button" aria-pressed="true" class="h-9 rounded-md bg-white shadow font-medium">Fonta Jump</button>
+        <button id="snakeMode" type="button" aria-pressed="false" class="h-9 rounded-md font-medium text-ink/60 hover:text-ink">Snake</button>
+      </div>
+      <canvas id="gameCanvas" class="mt-3 w-full rounded-lg border border-line bg-[#F8FAFB]" width="640" height="220" aria-label="Spielbereich"></canvas>
+      <div class="mt-3 flex items-center justify-between gap-3">
+        <p id="gameStatus" class="text-xs text-ink/60">Bereit zum Spielen</p>
+        <button id="gameStart" type="button" class="h-9 px-3 rounded-lg bg-sig text-white text-sm font-semibold hover:bg-sigd">Starten</button>
+      </div>
+      <div class="mt-4 border-t border-line pt-4">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <h4 class="font-semibold">Punkte-Shop</h4>
+            <p class="text-xs text-ink/60 mt-0.5">Skins und Effekte für beide Spiele</p>
+          </div>
+          <span id="gameWallet" class="text-sm font-semibold text-amber" aria-live="polite">0 Punkte</span>
+        </div>
+        <div id="gameShops" class="mt-3 space-y-4">
+          <div>
+            <h5 class="text-sm font-semibold">🐍 Snake-Shop</h5>
+            <div id="snakeShop" class="mt-2 grid gap-2 sm:grid-cols-2"></div>
+          </div>
+          <div>
+            <h5 class="text-sm font-semibold">🚀 Fonta-Jump-Shop</h5>
+            <div id="jumpShop" class="mt-2 grid gap-2 sm:grid-cols-2"></div>
+          </div>
+        </div>
+      </div>
+    </section>
   </section>
 </main>
 
@@ -482,6 +521,195 @@ $('search').addEventListener('keydown', e => { if (e.key === 'Escape') { e.targe
 $('employeeSearch').addEventListener('input', renderPeople);
 $('employeeSearch').addEventListener('keydown', e => { if (e.key === 'Escape') { e.target.value = ''; renderPeople(); } });
 $('groupFilter').addEventListener('click', e => { const b = e.target.closest('[data-g]'); if (b) { groupSel = b.dataset.g; renderGroupFilter(); renderPeople(); } });
+
+/* ---------- Spielpause ---------- */
+const gameCanvas = $('gameCanvas'), gameCtx = gameCanvas.getContext('2d');
+let gameMode = 'jump', gameRunning = false, gameFrame = 0, gameScore = 0;
+let jumpPlayer, jumpObstacles, jumpLastTime = 0, jumpKeysHeld = false, jumpShieldReady = false;
+let snake, snakeDirection, snakeNextDirection, snakeFood, snakeLastTime = 0, snakeShieldReady = false;
+const gameColors = { ink: '#1B2A3A', sig: '#0E6E78', amber: '#C77D0A', line: '#D3DAE1', paper: '#EDF0F3' };
+const GAME_STORE = 'anrufErinnerungen.game.v1';
+const shopItems = [
+  { id: 'snake-neon', mode: 'snake', name: 'Neon-Schlange', icon: '🟢', cost: 12, description: 'Leuchtet in frischem Türkis.' },
+  { id: 'snake-sunset', mode: 'snake', name: 'Sunset-Schlange', icon: '🟠', cost: 20, description: 'Warme Abendfarben für Snake.' },
+  { id: 'snake-golden-apple', mode: 'snake', name: 'Goldener Apfel', icon: '🍎', cost: 24, description: 'Goldene Äpfel bringen 3 Punkte.' },
+  { id: 'snake-growth-apple', mode: 'snake', name: 'Wachstums-Apfel', icon: '✨', cost: 30, description: 'Manche Äpfel machen dich extra lang.' },
+  { id: 'snake-shield', mode: 'snake', name: 'Krisen-Schild', icon: '🛡️', cost: 42, description: 'Einmal pro Lauf einen Crash überleben.' },
+  { id: 'jump-sky', mode: 'jump', name: 'Himmels-Effekt', icon: '☁️', cost: 18, description: 'Lässt Wolken über die Strecke ziehen.' },
+  { id: 'jump-fire', mode: 'jump', name: 'Feuer-Hindernisse', icon: '🔥', cost: 30, description: 'Hindernisse bekommen Feuer-Effekt.' },
+  { id: 'jump-jetpack', mode: 'jump', name: 'Jetpack', icon: '🚀', cost: 45, description: 'Leertaste halten und sanfter schweben.' },
+  { id: 'jump-rockets', mode: 'jump', name: 'Raketen-Alarm', icon: '💥', cost: 38, description: 'Fliegende Raketen kommen von rechts.' },
+  { id: 'jump-shield', mode: 'jump', name: 'Bubble-Schild', icon: '🔵', cost: 50, description: 'Einmal pro Lauf vor einem Treffer geschützt.' },
+  { id: 'jump-double', mode: 'jump', name: 'Turbo-Schuhe', icon: '⚡', cost: 55, description: 'Hindernisse bringen doppelte Punkte.' }
+];
+let gameProgress = { points: 0, owned: [], equipped: { snake: 'default', jump: 'default' } };
+try { gameProgress = { ...gameProgress, ...(JSON.parse(localStorage.getItem(GAME_STORE)) || {}) }; } catch {}
+gameProgress.owned = Array.isArray(gameProgress.owned) ? gameProgress.owned : [];
+gameProgress.equipped = { snake: 'default', jump: 'default', ...(gameProgress.equipped || {}) };
+const saveGameProgress = () => { try { localStorage.setItem(GAME_STORE, JSON.stringify(gameProgress)); } catch {} };
+function renderWallet() { $('gameWallet').textContent = `${gameProgress.points} Punkte`; updateGameScore(); }
+function awardPoints(amount = 1) {
+  const multiplier = gameMode === 'jump' && gameProgress.equipped.jump === 'jump-double' ? 2 : 1;
+  gameProgress.points += amount * multiplier; saveGameProgress(); renderShop();
+}
+function renderShopList(mode, target) {
+  const items = shopItems.filter(item => item.mode === mode);
+  $(target).innerHTML = items.map(item => {
+    const owned = gameProgress.owned.includes(item.id), equipped = gameProgress.equipped[item.mode] === item.id;
+    const disabled = !owned && gameProgress.points < item.cost;
+    return `<div class="rounded-lg border border-line bg-paper p-3 flex items-center gap-3">
+      <span class="text-2xl" aria-hidden="true">${item.icon}</span>
+      <div class="min-w-0 flex-1"><p class="font-medium truncate">${item.name}</p><p class="text-xs text-ink/60">${item.description}</p></div>
+      <button type="button" data-shop="${item.id}" ${disabled ? 'disabled' : ''} class="shrink-0 h-9 px-2 rounded-lg text-xs font-semibold ${equipped ? 'bg-ink text-white' : disabled ? 'bg-line text-ink/40' : 'bg-white border border-line hover:border-sig'}">${equipped ? 'Aktiv' : owned ? 'Anlegen' : item.cost + ' Punkte'}</button>
+    </div>`;
+  }).join('');
+}
+function renderShop() {
+  renderWallet();
+  renderShopList('snake', 'snakeShop'); renderShopList('jump', 'jumpShop');
+}
+function buyOrEquip(id) {
+  const item = shopItems.find(shopItem => shopItem.id === id); if (!item) return;
+  if (!gameProgress.owned.includes(id)) {
+    if (gameProgress.points < item.cost) return;
+    gameProgress.points -= item.cost; gameProgress.owned.push(id);
+  }
+  gameProgress.equipped[item.mode] = id; saveGameProgress(); renderShop();
+  gameMode === item.mode && (gameMode === 'jump' ? drawJump() : drawSnake());
+}
+
+function setGameMode(mode) {
+  gameMode = mode;
+  $('jumpMode').className = `h-9 rounded-md font-medium ${mode === 'jump' ? 'bg-white shadow text-ink' : 'text-ink/60 hover:text-ink'}`;
+  $('snakeMode').className = `h-9 rounded-md font-medium ${mode === 'snake' ? 'bg-white shadow text-ink' : 'text-ink/60 hover:text-ink'}`;
+  $('jumpMode').setAttribute('aria-pressed', mode === 'jump');
+  $('snakeMode').setAttribute('aria-pressed', mode === 'snake');
+  $('gameHelp').textContent = mode === 'jump' ? 'Fonta Jump: Leertaste halten für Jetpack, Pfeil nach oben zum Springen' : 'Snake: Pfeiltasten oder WASD';
+  stopGame();
+  gameMode === 'jump' ? drawJump() : drawSnake();
+}
+function updateGameScore() { $('gameScore').textContent = `Lauf: ${gameScore} · Konto: ${gameProgress.points}`; }
+function stopGame() { gameRunning = false; jumpKeysHeld = false; cancelAnimationFrame(gameFrame); $('gameStart').textContent = 'Starten'; $('gameStatus').textContent = 'Spiel beendet'; }
+function startGame() {
+  stopGame(); gameRunning = true; gameScore = 0; updateGameScore(); $('gameStart').textContent = 'Beenden';
+  if (gameMode === 'jump') { resetJump(); jumpLastTime = performance.now(); gameFrame = requestAnimationFrame(runJump); }
+  else { resetSnake(); snakeLastTime = performance.now(); gameFrame = requestAnimationFrame(runSnake); }
+}
+function toggleGame() { if (gameRunning) stopGame(); else startGame(); }
+function gameOver() {
+  gameScore = 0; updateGameScore(); gameRunning = true; $('gameStart').textContent = 'Beenden';
+  if (gameMode === 'jump') { resetJump(); jumpLastTime = performance.now(); gameFrame = requestAnimationFrame(runJump); }
+  else { resetSnake(); snakeLastTime = performance.now(); gameFrame = requestAnimationFrame(runSnake); }
+}
+function drawGround() {
+  gameCtx.fillStyle = gameColors.paper; gameCtx.fillRect(0, 190, 640, 30);
+  gameCtx.strokeStyle = gameColors.line; gameCtx.lineWidth = 2; gameCtx.beginPath(); gameCtx.moveTo(0, 190); gameCtx.lineTo(640, 190); gameCtx.stroke();
+}
+function resetJump() {
+  jumpPlayer = { x: 72, y: 164, width: 24, height: 26, velocity: 0, grounded: true };
+  jumpShieldReady = gameProgress.owned.includes('jump-shield');
+  jumpObstacles = [createJumpObstacle(640), createJumpObstacle(930)];
+  $('gameStatus').textContent = 'Springe über die Hindernisse'; drawJump();
+}
+function createJumpObstacle(x) {
+  const rocket = gameProgress.owned.includes('jump-rockets') && Math.random() < 0.42;
+  return rocket
+    ? { x, width: 34, height: 16, y: 72 + Math.random() * 68, type: 'rocket' }
+    : { x, width: 18 + Math.random() * 8, height: 28 + Math.random() * 25, type: 'ground' };
+}
+function jump() { if (gameMode === 'jump' && jumpPlayer?.grounded) { jumpPlayer.velocity = -600; jumpPlayer.grounded = false; } }
+function drawJump() {
+  gameCtx.clearRect(0, 0, 640, 220); gameCtx.fillStyle = '#F8FAFB'; gameCtx.fillRect(0, 0, 640, 220); drawGround();
+  if (!jumpPlayer) return;
+  if (gameProgress.owned.includes('jump-sky')) {
+    gameCtx.fillStyle = '#D8EEF2';
+    [90, 280, 500].forEach(x => { gameCtx.beginPath(); gameCtx.arc(x, 45, 16, 0, Math.PI * 2); gameCtx.arc(x + 18, 48, 12, 0, Math.PI * 2); gameCtx.fill(); });
+  }
+  gameCtx.fillStyle = gameColors.sig; gameCtx.fillRect(jumpPlayer.x, jumpPlayer.y, jumpPlayer.width, jumpPlayer.height);
+  if (jumpKeysHeld && gameProgress.owned.includes('jump-jetpack') && !jumpPlayer.grounded) {
+    gameCtx.fillStyle = '#F97316'; gameCtx.fillRect(jumpPlayer.x + 5, jumpPlayer.y + jumpPlayer.height, 14, 10);
+  }
+  jumpObstacles?.forEach(o => {
+    if (o.type === 'rocket') {
+      gameCtx.fillStyle = '#D94841'; gameCtx.fillRect(o.x, o.y, o.width, o.height);
+      gameCtx.fillStyle = '#F97316'; gameCtx.fillRect(o.x + o.width, o.y + 4, 9, 8);
+      gameCtx.fillStyle = '#F8FAFB'; gameCtx.fillRect(o.x + 7, o.y + 4, 6, 6);
+    } else {
+      gameCtx.fillStyle = gameProgress.owned.includes('jump-fire') ? '#E4572E' : gameColors.amber;
+      gameCtx.fillRect(o.x, 190 - o.height, o.width, o.height);
+    }
+  });
+  if (jumpShieldReady) { gameCtx.strokeStyle = '#3B82F6'; gameCtx.lineWidth = 2; gameCtx.beginPath(); gameCtx.arc(jumpPlayer.x + 12, jumpPlayer.y + 13, 21, 0, Math.PI * 2); gameCtx.stroke(); }
+}
+function runJump(time) {
+  if (!gameRunning) return; const dt = Math.min((time - jumpLastTime) / 1000, 0.04); jumpLastTime = time;
+  const jetpackActive = gameProgress.owned.includes('jump-jetpack') && jumpKeysHeld && !jumpPlayer.grounded;
+  jumpPlayer.velocity += (jetpackActive ? 420 : 1500) * dt; if (jetpackActive) jumpPlayer.velocity = Math.min(jumpPlayer.velocity, 130); jumpPlayer.y += jumpPlayer.velocity * dt;
+  if (jumpPlayer.y >= 164) { jumpPlayer.y = 164; jumpPlayer.velocity = 0; jumpPlayer.grounded = true; }
+  jumpObstacles.forEach(o => { o.x -= (220 + gameScore * 4) * dt; });
+  if (jumpObstacles[0].x < -50) { const passed = jumpObstacles.shift(); jumpObstacles.push(createJumpObstacle(jumpObstacles.at(-1).x + 270 + Math.random() * 180)); gameScore++; awardPoints(passed.type === 'rocket' ? 2 : 1); updateGameScore(); }
+  const hitIndex = jumpObstacles.findIndex(o => {
+    const top = o.type === 'rocket' ? o.y : 190 - o.height, bottom = o.type === 'rocket' ? o.y + o.height : 190;
+    return jumpPlayer.x < o.x + o.width && jumpPlayer.x + jumpPlayer.width > o.x && jumpPlayer.y < bottom && jumpPlayer.y + jumpPlayer.height > top;
+  });
+  if (hitIndex !== -1) {
+    if (jumpShieldReady) { jumpShieldReady = false; jumpObstacles.splice(hitIndex, 1); $('gameStatus').textContent = 'Schild hat dich gerettet!'; }
+    else { gameOver(); drawJump(); return; }
+  }
+  drawJump(); gameFrame = requestAnimationFrame(runJump);
+}
+function resetSnake() {
+  snake = [{ x: 15, y: 10 }, { x: 14, y: 10 }, { x: 13, y: 10 }]; snakeDirection = { x: 1, y: 0 }; snakeNextDirection = { x: 1, y: 0 }; snakeShieldReady = gameProgress.owned.includes('snake-shield'); placeSnakeFood();
+  $('gameStatus').textContent = 'Sammle die Punkte ein'; drawSnake();
+}
+function placeSnakeFood() {
+  do {
+    snakeFood = { x: Math.floor(Math.random() * 32), y: Math.floor(Math.random() * 11), type: 'normal' };
+    const roll = Math.random();
+    if (gameProgress.owned.includes('snake-golden-apple') && roll < 0.22) snakeFood.type = 'gold';
+    else if (gameProgress.owned.includes('snake-growth-apple') && roll < 0.42) snakeFood.type = 'growth';
+  } while (snake?.some(part => part.x === snakeFood.x && part.y === snakeFood.y));
+}
+function drawSnake() {
+  gameCtx.clearRect(0, 0, 640, 220); gameCtx.fillStyle = '#F8FAFB'; gameCtx.fillRect(0, 0, 640, 220);
+  gameCtx.fillStyle = gameProgress.equipped.snake === 'snake-neon' ? '#14B8A6' : gameProgress.equipped.snake === 'snake-sunset' ? '#F97316' : gameColors.sig;
+  snake?.forEach(part => gameCtx.fillRect(part.x * 20 + 1, part.y * 20 + 1, 18, 18));
+  if (snakeFood) { gameCtx.fillStyle = snakeFood.type === 'gold' ? '#EAB308' : snakeFood.type === 'growth' ? '#A855F7' : gameColors.amber; gameCtx.fillRect(snakeFood.x * 20 + 3, snakeFood.y * 20 + 3, 14, 14); }
+  if (snakeShieldReady) { gameCtx.strokeStyle = '#3B82F6'; gameCtx.lineWidth = 2; gameCtx.strokeRect(snake[0].x * 20 - 2, snake[0].y * 20 - 2, 22, 22); }
+}
+function runSnake(time) {
+  if (!gameRunning) return; if (time - snakeLastTime < 115) { gameFrame = requestAnimationFrame(runSnake); return; } snakeLastTime = time;
+  snakeDirection = snakeNextDirection; const head = { x: snake[0].x + snakeDirection.x, y: snake[0].y + snakeDirection.y };
+  const collision = head.x < 0 || head.x >= 32 || head.y < 0 || head.y >= 11 || snake.some(part => part.x === head.x && part.y === head.y);
+  if (collision) {
+    if (snakeShieldReady) {
+      snakeShieldReady = false; snake = [{ x: 15, y: 10 }, { x: 14, y: 10 }, { x: 13, y: 10 }];
+      snakeDirection = { x: 1, y: 0 }; snakeNextDirection = { x: 1, y: 0 }; placeSnakeFood(); $('gameStatus').textContent = 'Schild hat dich gerettet!'; drawSnake(); gameFrame = requestAnimationFrame(runSnake); return;
+    }
+    else { gameOver(); drawSnake(); return; }
+  }
+  snake.unshift(head);
+  if (head.x === snakeFood.x && head.y === snakeFood.y) {
+    const foodType = snakeFood.type; gameScore++; awardPoints(foodType === 'gold' ? 3 : 1);
+    if (foodType === 'growth') snake.push({ ...snake.at(-1) }); else if (foodType !== 'gold') snake.pop();
+    placeSnakeFood();
+  } else snake.pop();
+  drawSnake(); gameFrame = requestAnimationFrame(runSnake);
+}
+$('gameStart').addEventListener('click', toggleGame);
+$('jumpMode').addEventListener('click', () => setGameMode('jump'));
+$('snakeMode').addEventListener('click', () => setGameMode('snake'));
+$('gameShops').addEventListener('click', e => { const button = e.target.closest('[data-shop]'); if (button) buyOrEquip(button.dataset.shop); });
+document.addEventListener('keydown', e => {
+  if (e.key === ' ' || e.key === 'ArrowUp') { if (gameMode === 'jump' && !modal.open && !editModal.open) { e.preventDefault(); jumpKeysHeld = true; jump(); } }
+  if (gameMode !== 'snake' || modal.open || editModal.open) return;
+  const directions = { ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 }, ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, w: { x: 0, y: -1 }, s: { x: 0, y: 1 }, a: { x: -1, y: 0 }, d: { x: 1, y: 0 } };
+  const next = directions[e.key];
+  if (next && !(next.x === -snakeDirection.x && next.y === -snakeDirection.y)) { e.preventDefault(); snakeNextDirection = next; }
+});
+document.addEventListener('keyup', e => { if (e.key === ' ' || e.key === 'ArrowUp') jumpKeysHeld = false; });
+setGameMode('jump');
+renderShop();
 document.addEventListener('keydown', e => {
   if (e.key === '/' && !modal.open && !editModal.open && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); $('search').focus(); $('search').select(); }
 });
